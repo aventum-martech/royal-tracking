@@ -3,7 +3,7 @@ import "server-only";
 import { getAppUrl, getProjectName } from "@/lib/env";
 import { getAppVersion, getReleaseChannel } from "@/lib/version/channel";
 
-const NTFY_URL = "https://ntfy.royalserver.com.br/tracking-error";
+const NTFY_URL = "https://ntfy.aventum.com.br/tracking-error";
 const BODY_MAX = 1500;
 
 const SECRET_KEY_RE =
