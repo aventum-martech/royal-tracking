@@ -17,8 +17,10 @@ import {
   getPipedriveMe,
   listPipelines,
   listStages,
+  listWebhooks,
 } from "@/lib/pipedrive/api";
 import { metadataRecord } from "@/lib/pipedrive/credentials";
+import { pickPipedriveDealWebhook } from "@/lib/pipedrive/webhook-match";
 
 export const PIPEDRIVE_WEBHOOK_AUTH_USER = "royal-tracking";
 
@@ -186,26 +188,50 @@ export async function ensurePipedriveWebhooks(
   const created: string[] = [];
 
   const key = "*.deal";
-  if (!webhookIds[key]) {
+  const listed = await listWebhooks(conn);
+  const choice = pickPipedriveDealWebhook({
+    storedId: webhookIds[key],
+    inboundUrl,
+    webhooks: listed,
+  });
+  if (choice.action === "reuse") {
+    webhookIds[key] = choice.id;
+  } else {
     const wh = await createDealWebhook(conn, {
       url: inboundUrl,
       httpAuthUser: PIPEDRIVE_WEBHOOK_AUTH_USER,
       httpAuthPassword: secret,
     });
-    if (wh?.id) {
-      webhookIds[key] = wh.id;
-      created.push(key);
+    if (!wh?.id) {
+      throw new Error("Pipedrive não devolveu id do webhook");
     }
+    webhookIds[key] = wh.id;
+    created.push(key);
   }
 
   meta.pipedrive_webhook_ids = webhookIds;
   meta.webhooks_configured_at = new Date().toISOString();
+  delete meta.webhook_error;
   await query(
     `update integration_connections set metadata = $1::jsonb, updated_at = now() where id = $2`,
     [JSON.stringify(meta), conn.id]
   );
 
   return { created };
+}
+
+export async function persistPipedriveWebhookError(
+  connectionId: string,
+  error: string
+): Promise<void> {
+  const conn = await getConnection(connectionId);
+  if (!conn) return;
+  const meta = metadataRecord(conn.metadata);
+  meta.webhook_error = error.slice(0, 400);
+  await query(
+    `update integration_connections set metadata = $1::jsonb, updated_at = now() where id = $2`,
+    [JSON.stringify(meta), connectionId]
+  );
 }
 
 export async function cleanupPipedriveWebhooks(
@@ -266,6 +292,8 @@ export async function postOauthPipedriveSetup(
   try {
     await ensurePipedriveWebhooks(connectionId);
   } catch (err) {
+    const message = err instanceof Error ? err.message : "webhook_setup_failed";
     console.error("[pipedrive] ensurePipedriveWebhooks failed", err);
+    await persistPipedriveWebhookError(connectionId, message);
   }
 }
